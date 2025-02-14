@@ -1,16 +1,7 @@
 #include "trie.h"
 #include <ctype.h>
 
-size_t split_file_words(FILE *file, char ***buf, size_t *buf_size){
-    if (*buf_size == 0){
-        *buf_size = 256;
-        *buf = malloc(sizeof(char) * (*buf_size));
-        if (*buf == NULL){
-            fprintf(stderr, "unable to allocate memory for buf\n");
-            return 0;
-        }
-    }
-
+int split_file_words_apply(FILE *file, Trie *trie, int apply(Trie *trie, char *value, size_t value_size)){
     int c;
     size_t buf_len, curr_len, curr_size;
 
@@ -19,23 +10,13 @@ size_t split_file_words(FILE *file, char ***buf, size_t *buf_size){
     char *curr = malloc(sizeof(char) * curr_size);
     if (curr == NULL){
         fprintf(stderr, "unable to allocate memory for curr\n");
-        free(buf);
         return 0;
     }
 
     while((c = fgetc(file)) != EOF){
         if (isspace(c)){
-            if (buf_len >= *buf_size){
-                (*buf_size) *= 2;
-                *buf = realloc(buf, sizeof(char) * (*buf_size));
-                if (*buf == NULL){
-                    fprintf(stderr, "unable to reallocate memory for buf\n");
-                    free(curr);
-                    return 0;
-                }
-            }
             curr[curr_len] = '\0';
-            (*buf)[buf_len++] = strdup(curr);
+            apply(trie, curr, curr_len);
             curr_len = 0;
         }else{
             if (curr_len >= curr_size){
@@ -43,7 +24,6 @@ size_t split_file_words(FILE *file, char ***buf, size_t *buf_size){
                 curr = realloc(curr, sizeof(char) * curr_size);
                 if (curr == NULL){
                     fprintf(stderr, "unable to reallocate memory for curr\n");
-                    free(buf);
                     return 0;
                 }
             }
@@ -52,7 +32,8 @@ size_t split_file_words(FILE *file, char ***buf, size_t *buf_size){
     }
 
     free(curr);
-    return buf_len;
+
+    return 1;
 }
 
 int spell_check_loop(Trie *trie){
@@ -78,37 +59,37 @@ int spell_check_loop(Trie *trie){
         printf("%s not spelled correctly\n", buf);
     }
 
-
     trie_free(trie);
+    return 0;
+}
+
+int spell_check_file_apply(Trie *trie, char *value, size_t value_size){
+    Trie *temp = trie_search(trie, value, value_size);
+    if (temp && temp->word_count){
+        printf("%s spelled correctly\n", value);
+        return 1;
+    }
+
+    printf("%s not spelled correctly\n", value);
     return 0;
 }
 
 int spell_check_file(Trie *trie, char *filename){
     FILE *file = fopen(filename, "r");
-
-    Trie *temp;
-    char **buf = NULL;
-    size_t i, buf_size, buf_len;
-    buf_size = 0;
-    buf_len = split_file_words(file, &buf, &buf_size);
-
-    fclose(file);
-    if (!buf_len){
+    if (file == NULL){
         fprintf(stderr, "unable to read file %s\n", filename);
+        trie_free(trie);
+        return 0;
+    }
+
+    int res = split_file_words_apply(file, trie, spell_check_file_apply);
+    fclose(file);
+    if (!res){
+        fprintf(stderr, "unable to add words file %s", filename);
         trie_free(trie);
         return 1;
     }
 
-    for (i = 0; i < buf_len; i++){
-        temp = trie_search(trie, buf[i], strlen(buf[i]));
-        if (temp && temp->word_count){
-            printf("%s spelled correctly\n", buf[i]);
-            continue;
-        }
-        printf("%s not spelled correctly\n", buf[i]);
-        free(buf[i]);
-    }
-    free(buf);
     trie_free(trie);
 
     return 0;
@@ -139,23 +120,13 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
-    char **buf = NULL;
-    size_t i, buf_size, buf_len;
-    buf_size = 0;
-    buf_len = split_file_words(file, &buf, &buf_size);
-
+    int res = split_file_words_apply(file, trie, trie_add);
     fclose(file);
-    if (!buf_len){
-        fprintf(stderr, "unable to read source %s\n", argv[1]);
+    if (!res){
+        fprintf(stderr, "unable to add words file %s", argv[1]);
         trie_free(trie);
         return 1;
     }
-
-    for (i = 0; i < buf_len; i++){
-        trie_add(trie, buf[i], strlen(buf[i]));
-        free(buf[i]);
-    }
-    free(buf);
 
     if (argc == 2){
         return spell_check_loop(trie);
